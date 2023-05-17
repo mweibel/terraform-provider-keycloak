@@ -2,9 +2,11 @@ package provider
 
 import (
 	"context"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
+	"github.com/imdario/mergo"
 	"github.com/mrparkers/terraform-provider-keycloak/keycloak"
 	"github.com/mrparkers/terraform-provider-keycloak/keycloak/types"
 )
@@ -654,6 +656,13 @@ func resourceKeycloakRealm() *schema.Resource {
 				Elem: &schema.Resource{
 					Schema: webAuthnSchema,
 				},
+			},
+
+			"import": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  false,
+				ForceNew: true,
 			},
 		},
 	}
@@ -1371,9 +1380,27 @@ func resourceKeycloakRealmCreate(ctx context.Context, data *schema.ResourceData,
 		return diag.FromErr(err)
 	}
 
-	err = keycloakClient.NewRealm(ctx, realm)
-	if err != nil {
-		return diag.FromErr(err)
+	if data.Get("import").(bool) {
+		tflog.Info(ctx, "realm", map[string]any{"name": realm.Realm})
+
+		existingRealm, err := keycloakClient.GetRealm(ctx, realm.Realm)
+		if err != nil {
+			return diag.FromErr(err)
+		}
+
+		if err = mergo.Merge(realm, existingRealm); err != nil {
+			return diag.FromErr(err)
+		}
+
+		err = keycloakClient.UpdateRealm(ctx, realm)
+		if err != nil {
+			return diag.FromErr(err)
+		}
+	} else {
+		err = keycloakClient.NewRealm(ctx, realm)
+		if err != nil {
+			return diag.FromErr(err)
+		}
 	}
 
 	setRealmData(data, realm)
@@ -1423,6 +1450,9 @@ func resourceKeycloakRealmUpdate(ctx context.Context, data *schema.ResourceData,
 }
 
 func resourceKeycloakRealmDelete(ctx context.Context, data *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	if data.Get("import").(bool) {
+		return nil
+	}
 	keycloakClient := meta.(*keycloak.KeycloakClient)
 
 	return diag.FromErr(keycloakClient.DeleteRealm(ctx, data.Id()))
